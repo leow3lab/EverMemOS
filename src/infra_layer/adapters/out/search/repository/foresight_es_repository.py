@@ -397,6 +397,96 @@ class ForesightEsRepository(BaseRepository[ForesightDoc]):
             )
             raise
 
+    async def delete_by_filters(
+        self,
+        user_id: Optional[str] = None,
+        group_id: Optional[str] = None,
+        refresh: bool = False,
+    ) -> int:
+        """
+        Batch delete foresight documents by filter conditions.
+
+        Args:
+            user_id: User ID filter
+            group_id: Group ID filter
+            refresh: Whether to refresh index immediately
+
+        Returns:
+            Number of deleted documents
+        """
+        try:
+            filter_queries = []
+            if user_id and user_id != MAGIC_ALL:
+                filter_queries.append({"term": {"user_id": user_id}})
+            if group_id and group_id != MAGIC_ALL:
+                filter_queries.append({"term": {"group_id": group_id}})
+
+            if not filter_queries:
+                raise ValueError(
+                    "At least one filter condition (user_id or group_id) must be provided"
+                )
+
+            delete_query = {"bool": {"must": filter_queries}}
+            client = await self.get_client()
+            index_name = self.get_index_name()
+            response = await client.delete_by_query(
+                index=index_name, body={"query": delete_query}, refresh=refresh
+            )
+            deleted_count = response.get('deleted', 0)
+            logger.debug(
+                "✅ Batch deleted foresight by filter conditions: user_id=%s, group_id=%s, deleted %d records",
+                user_id,
+                group_id,
+                deleted_count,
+            )
+            return deleted_count
+
+        except ValueError as e:
+            logger.error("❌ Deletion parameter error: %s", e)
+            raise
+        except Exception as e:
+            logger.error(
+                "❌ Failed to batch delete foresight: user_id=%s, group_id=%s, error=%s",
+                user_id,
+                group_id,
+                e,
+            )
+            raise
+
+    async def delete_by_parent_id(self, parent_id: str, refresh: bool = False) -> int:
+        """
+        Delete foresight documents by parent_id.
+
+        Args:
+            parent_id: Parent event ID
+            refresh: Whether to refresh index immediately
+
+        Returns:
+            Number of deleted documents
+        """
+        try:
+            client = await self.get_client()
+            index_name = self.get_index_name()
+            response = await client.delete_by_query(
+                index=index_name,
+                body={"query": {"term": {"parent_id": parent_id}}},
+                refresh=refresh,
+            )
+            deleted_count = response.get('deleted', 0)
+            logger.debug(
+                "✅ Deleted foresight by parent_id: parent_id=%s, deleted %d records",
+                parent_id,
+                deleted_count,
+            )
+            return deleted_count
+        except Exception as e:
+            logger.error(
+                "❌ Failed to delete foresight by parent_id: parent_id=%s, error=%s",
+                parent_id,
+                e,
+            )
+            raise
+
     @staticmethod
     def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         """Parse ISO date string"""

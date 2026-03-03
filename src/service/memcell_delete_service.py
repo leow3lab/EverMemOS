@@ -182,6 +182,95 @@ class MemCellDeleteService:
             )
             raise
 
+    async def _delete_es_docs(
+        self,
+        user_id: Optional[str],
+        group_id: Optional[str],
+        event_id: Optional[str],
+        filters_used: list,
+    ) -> int:
+        """同步清理 Elasticsearch 索引，防止已删除记忆仍被关键词召回。
+
+        Args:
+            user_id: 用户 ID（MAGIC_ALL 或 None 表示不用此维度过滤）
+            group_id: 群组 ID（MAGIC_ALL 或 None 表示不用此维度过滤）
+            event_id: 单条记忆 ID（MAGIC_ALL 或 None 表示不按此过滤）
+            filters_used: 已使用的过滤条件列表（用于日志）
+
+        Returns:
+            删除的文档条数之和
+        """
+        import asyncio
+        from core.oxm.constants import MAGIC_ALL
+        from infra_layer.adapters.out.search.repository.episodic_memory_es_repository import (
+            EpisodicMemoryEsRepository,
+        )
+        from infra_layer.adapters.out.search.repository.foresight_es_repository import (
+            ForesightEsRepository,
+        )
+        from infra_layer.adapters.out.search.repository.event_log_es_repository import (
+            EventLogEsRepository,
+        )
+        from core.di.context import get_bean_by_type
+
+        episodic_repo = get_bean_by_type(EpisodicMemoryEsRepository)
+        foresight_repo = get_bean_by_type(ForesightEsRepository)
+        event_log_repo = get_bean_by_type(EventLogEsRepository)
+
+        effective_user_id = user_id if (user_id and user_id != MAGIC_ALL) else None
+        effective_group_id = group_id if (group_id and group_id != MAGIC_ALL) else None
+        effective_event_id = event_id if (event_id and event_id != MAGIC_ALL) else None
+
+        tasks = []
+
+        # 按 user/group 批量删除 ES 文档
+        if effective_user_id or effective_group_id:
+            tasks.append(
+                episodic_repo.delete_by_filters(
+                    user_id=effective_user_id, group_id=effective_group_id
+                )
+            )
+            tasks.append(
+                foresight_repo.delete_by_filters(
+                    user_id=effective_user_id, group_id=effective_group_id
+                )
+            )
+            tasks.append(
+                event_log_repo.delete_by_filters(
+                    user_id=effective_user_id, group_id=effective_group_id
+                )
+            )
+
+        # 按 event_id 精确删除单条 ES 文档
+        if effective_event_id:
+            tasks.append(episodic_repo.delete_by_event_id(effective_event_id))
+            tasks.append(foresight_repo.delete_by_parent_id(effective_event_id))
+            tasks.append(event_log_repo.delete_by_parent_id(effective_event_id))
+
+        if not tasks:
+            return 0
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        total = 0
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning(
+                    "ES doc deletion failed (non-fatal): filters=%s, error=%s",
+                    filters_used,
+                    r,
+                )
+            elif isinstance(r, bool):
+                total += 1 if r else 0
+            elif isinstance(r, int):
+                total += r
+
+        logger.info(
+            "ES doc cleanup completed: filters=%s, deleted_docs=%d",
+            filters_used,
+            total,
+        )
+        return total
+
     async def _delete_milvus_vectors(
         self,
         user_id: Optional[str],
@@ -449,6 +538,60 @@ class MemCellDeleteService:
                     "Milvus vector cleanup encountered an error (non-fatal): filters=%s, error=%s",
                     filters_used,
                     milvus_err,
+                )
+
+            # 8) 同步清理 Elasticsearch 索引，防止已删除记忆仍被关键词召回
+            try:
+                await self._delete_es_docs(
+                    user_id=user_id,
+                    group_id=group_id,
+                    event_id=event_id,
+                    filters_used=filters_used,
+                )
+            except Exception as es_err:
+                # ES 清理失败不影响主流程返回成功
+                logger.warning(
+                    "ES doc cleanup encountered an error (non-fatal): filters=%s, error=%s",
+                    filters_used,
+                    es_err,
+                )
+
+            # 9) 重置 ConversationStatus 并清空 conversation_data
+            #    防止清空记忆后 last_memcell_time 仍保留旧时间戳，导致下次边界检测读取范围异常
+            try:
+                from infra_layer.adapters.out.persistence.repository.conversation_status_raw_repository import (
+                    ConversationStatusRawRepository,
+                )
+                from infra_layer.adapters.out.persistence.repository.conversation_data_raw_repository import (
+                    ConversationDataRepositoryImpl,
+                )
+                from core.di.context import get_bean_by_type
+
+                if group_id and group_id != MAGIC_ALL:
+                    # 删除整条 ConversationStatus，让下次消息到来时重新从零创建
+                    # 这样 last_memcell_time / old_msg_start_time / new_msg_start_time 均归零
+                    cs_repo = get_bean_by_type(ConversationStatusRawRepository)
+                    cs_deleted = await cs_repo.delete_by_group_id(group_id)
+                    logger.info(
+                        "ConversationStatus reset: group_id=%s, deleted=%s",
+                        group_id,
+                        cs_deleted,
+                    )
+
+                    # 将 conversation_data 中的旧消息标为已用（sync_status=1）
+                    # 防止清空后的旧消息在下一轮边界检测中污染上下文
+                    conv_data_repo = get_bean_by_type(ConversationDataRepositoryImpl)
+                    await conv_data_repo.delete_conversation_data(group_id)
+                    logger.info(
+                        "Conversation data cleared (marked as used): group_id=%s",
+                        group_id,
+                    )
+            except Exception as conv_err:
+                # 状态重置失败不影响主流程返回成功
+                logger.warning(
+                    "ConversationStatus/conversation_data reset encountered an error (non-fatal): filters=%s, error=%s",
+                    filters_used,
+                    conv_err,
                 )
 
             return {"filters": filters_used, "count": total_count, "success": True}
