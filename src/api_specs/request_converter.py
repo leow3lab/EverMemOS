@@ -412,11 +412,13 @@ async def convert_simple_message_to_memorize_request(
     )
 
     # Create and return MemorizeRequest
+    # Populate user_id_list with the sender so single-user-mode records carry
+    # user_id in ConversationStatus, enabling delete-by-user cleanup later.
     return MemorizeRequest(
         history_raw_data_list=[],
         new_raw_data_list=[raw_data],
         raw_data_type=RawDataType.CONVERSATION,
-        user_id_list=[],
+        user_id_list=[sender] if sender else [],
         group_id=group_id,
         group_name=group_name,
         current_time=timestamp,
