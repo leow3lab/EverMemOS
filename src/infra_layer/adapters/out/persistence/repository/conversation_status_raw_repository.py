@@ -78,7 +78,7 @@ class ConversationStatusRawRepository(BaseRepository[ConversationStatus]):
         """
         try:
             docs = await self.model.find(
-                {"user_id": user_id}, {"group_id": 1}, session=session
+                {"user_id": user_id}, session=session
             ).to_list()
             return [d.group_id for d in docs if d.group_id]
         except Exception as e:
