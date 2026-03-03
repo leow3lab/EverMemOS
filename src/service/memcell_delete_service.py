@@ -589,13 +589,30 @@ class MemCellDeleteService:
 
                 elif user_id and user_id != MAGIC_ALL:
                     # group_id=MAGIC_ALL 但 user_id 已知（如 countbot 的全量删除场景）
-                    # 通过 user_id 字段（单用户模式下填充）批量删除该用户的所有 ConversationStatus
+                    # 先收集该用户的所有 group_id，再清理 conversation_data，最后删除 ConversationStatus
+                    affected_group_ids = await cs_repo.find_group_ids_by_user_id(user_id)
                     cs_deleted = await cs_repo.delete_by_user_id(user_id)
                     logger.info(
-                        "ConversationStatus reset by user_id: user_id=%s, deleted=%d",
+                        "ConversationStatus reset by user_id: user_id=%s, deleted=%d, group_ids=%s",
                         user_id,
                         cs_deleted,
+                        affected_group_ids,
                     )
+
+                    # 清理每个 group 的 conversation_data
+                    for gid in affected_group_ids:
+                        try:
+                            await conv_data_repo.delete_conversation_data(gid)
+                            logger.info(
+                                "Conversation data cleared: group_id=%s (via user_id delete)",
+                                gid,
+                            )
+                        except Exception as cd_err:
+                            logger.warning(
+                                "Conversation data cleanup failed (non-fatal): group_id=%s, error=%s",
+                                gid,
+                                cd_err,
+                            )
 
             except Exception as conv_err:
                 # 状态重置失败不影响主流程返回成功

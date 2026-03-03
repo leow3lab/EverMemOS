@@ -62,6 +62,29 @@ class ConversationStatusRawRepository(BaseRepository[ConversationStatus]):
             logger.error("❌ Failed to delete conversation status by group ID: %s", e)
             return False
 
+    async def find_group_ids_by_user_id(
+        self, user_id: str, session: Optional[AsyncClientSession] = None
+    ) -> list[str]:
+        """Return the list of group_ids associated with a user_id.
+
+        Only returns records that have the `user_id` field populated
+        (single-user mode records written after the 2026-03-03 schema migration).
+
+        Args:
+            user_id: User ID to look up
+
+        Returns:
+            List of group_id strings (may be empty)
+        """
+        try:
+            docs = await self.model.find(
+                {"user_id": user_id}, {"group_id": 1}, session=session
+            ).to_list()
+            return [d.group_id for d in docs if d.group_id]
+        except Exception as e:
+            logger.error("❌ Failed to find group_ids by user_id: %s", e)
+            return []
+
     async def delete_by_user_id(
         self, user_id: str, session: Optional[AsyncClientSession] = None
     ) -> int:
