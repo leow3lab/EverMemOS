@@ -16,6 +16,10 @@ class ConversationStatus(DocumentBase, AuditBase):
 
     # Basic information
     group_id: str = Field(..., description="Group ID, empty means private chat")
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Primary user ID (populated in single-user mode; used for delete-by-user queries)",
+    )
     old_msg_start_time: Optional[datetime] = Field(
         default=None, description="Conversation window read start time"
     )
@@ -54,6 +58,7 @@ class ConversationStatus(DocumentBase, AuditBase):
             IndexModel(
                 [("group_id", ASCENDING)], name="idx_group_id", unique=True
             ),  # group_id must be unique
+            IndexModel([("user_id", ASCENDING)], name="idx_user_id"),
             IndexModel([("created_at", DESCENDING)], name="idx_created_at"),
             IndexModel([("updated_at", DESCENDING)], name="idx_updated_at"),
         ]

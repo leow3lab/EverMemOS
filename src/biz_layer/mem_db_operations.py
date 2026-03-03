@@ -1203,6 +1203,9 @@ async def _update_status_for_continuing_conversation(
                 "created_at": _normalize_datetime_for_storage(current_time),
                 "updated_at": _normalize_datetime_for_storage(current_time),
             }
+            # Populate user_id for single-user mode to enable delete-by-user queries
+            if request.user_id_list and len(request.user_id_list) == 1:
+                update_data["user_id"] = request.user_id_list[0]
             result = await status_repo.upsert_by_group_id(request.group_id, update_data)
             if result:
                 logger.info(
@@ -1234,6 +1237,9 @@ async def _update_status_for_continuing_conversation(
             "created_at": _normalize_datetime_for_storage(existing_status.created_at),
             "updated_at": current_time,
         }
+        # Backfill user_id for single-user mode records that may lack it
+        if request.user_id_list and len(request.user_id_list) == 1:
+            update_data["user_id"] = request.user_id_list[0]
 
         logger.debug(f"Conversation continuing, update new_msg_start_time")
         result = await status_repo.upsert_by_group_id(request.group_id, update_data)
@@ -1333,6 +1339,9 @@ async def _update_status_after_memcell_extraction(
             "last_memcell_time": _normalize_datetime_for_storage(memcell_time),
             "updated_at": current_time,
         }
+        # Backfill user_id for single-user mode records that may lack it
+        if request.user_id_list and len(request.user_id_list) == 1:
+            update_data["user_id"] = request.user_id_list[0]
 
         # TODO : clear queue
 

@@ -62,6 +62,35 @@ class ConversationStatusRawRepository(BaseRepository[ConversationStatus]):
             logger.error("❌ Failed to delete conversation status by group ID: %s", e)
             return False
 
+    async def delete_by_user_id(
+        self, user_id: str, session: Optional[AsyncClientSession] = None
+    ) -> int:
+        """Delete all conversation statuses associated with a specific user ID
+
+        Used when clearing all memories for a user (group_id unknown / MAGIC_ALL).
+        Only affects records that have `user_id` populated (single-user mode records).
+
+        Args:
+            user_id: User ID to delete conversation statuses for
+
+        Returns:
+            Number of deleted records (0 if none found or on error)
+        """
+        try:
+            result = await self.model.find(
+                {"user_id": user_id}, session=session
+            ).delete()
+            deleted = int(result.deleted_count) if result and hasattr(result, "deleted_count") else 0
+            logger.info(
+                "✅ Deleted conversation statuses by user_id: user_id=%s, deleted=%d",
+                user_id,
+                deleted,
+            )
+            return deleted
+        except Exception as e:
+            logger.error("❌ Failed to delete conversation status by user_id: %s", e)
+            return 0
+
     async def upsert_by_group_id(
         self,
         group_id: str,

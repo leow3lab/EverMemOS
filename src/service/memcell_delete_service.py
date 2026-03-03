@@ -567,10 +567,12 @@ class MemCellDeleteService:
                 )
                 from core.di.utils import get_bean_by_type
 
+                cs_repo = get_bean_by_type(ConversationStatusRawRepository)
+                conv_data_repo = get_bean_by_type(ConversationDataRepositoryImpl)
+
                 if group_id and group_id != MAGIC_ALL:
-                    # 删除整条 ConversationStatus，让下次消息到来时重新从零创建
-                    # 这样 last_memcell_time / old_msg_start_time / new_msg_start_time 均归零
-                    cs_repo = get_bean_by_type(ConversationStatusRawRepository)
+                    # 已知 group_id：精确删除该 group 的 ConversationStatus
+                    # 让下次消息到来时重新从零创建，last_memcell_time / old_msg_start_time / new_msg_start_time 均归零
                     cs_deleted = await cs_repo.delete_by_group_id(group_id)
                     logger.info(
                         "ConversationStatus reset: group_id=%s, deleted=%s",
@@ -578,14 +580,23 @@ class MemCellDeleteService:
                         cs_deleted,
                     )
 
-                    # 将 conversation_data 中的旧消息标为已用（sync_status=1）
-                    # 防止清空后的旧消息在下一轮边界检测中污染上下文
-                    conv_data_repo = get_bean_by_type(ConversationDataRepositoryImpl)
+                    # 将 conversation_data 中的旧消息清空
                     await conv_data_repo.delete_conversation_data(group_id)
                     logger.info(
-                        "Conversation data cleared (marked as used): group_id=%s",
+                        "Conversation data cleared: group_id=%s",
                         group_id,
                     )
+
+                elif user_id and user_id != MAGIC_ALL:
+                    # group_id=MAGIC_ALL 但 user_id 已知（如 countbot 的全量删除场景）
+                    # 通过 user_id 字段（单用户模式下填充）批量删除该用户的所有 ConversationStatus
+                    cs_deleted = await cs_repo.delete_by_user_id(user_id)
+                    logger.info(
+                        "ConversationStatus reset by user_id: user_id=%s, deleted=%d",
+                        user_id,
+                        cs_deleted,
+                    )
+
             except Exception as conv_err:
                 # 状态重置失败不影响主流程返回成功
                 logger.warning(
