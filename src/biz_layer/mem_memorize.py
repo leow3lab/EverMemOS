@@ -84,6 +84,10 @@ from core.context.context import get_current_app_info
 
 logger = get_logger(__name__)
 
+# Per-group asyncio locks to prevent concurrent memorize race conditions.
+# Same group_id requests are serialized; different group_ids run in parallel.
+_group_locks: dict[str, asyncio.Lock] = {}
+
 
 @dataclass
 class MemoryDocPayload:
@@ -1390,6 +1394,17 @@ async def load_core_memories(
 
 
 async def memorize(request: MemorizeRequest) -> int:
+    """Per-group serialization wrapper. Acquires a per-group lock so that
+    concurrent requests for the same group_id are processed one at a time,
+    preventing ConversationStatus read-modify-write race conditions.
+    """
+    group_id = request.group_id or ""
+    lock = _group_locks.setdefault(group_id, asyncio.Lock())
+    async with lock:
+        return await _do_memorize(request)
+
+
+async def _do_memorize(request: MemorizeRequest) -> int:
     """
     Main memory extraction process (global queue version)
 
