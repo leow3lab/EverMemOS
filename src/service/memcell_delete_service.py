@@ -211,7 +211,7 @@ class MemCellDeleteService:
         from infra_layer.adapters.out.search.repository.event_log_es_repository import (
             EventLogEsRepository,
         )
-        from core.di.context import get_bean_by_type
+        from core.di.utils import get_bean_by_type
 
         episodic_repo = get_bean_by_type(EpisodicMemoryEsRepository)
         foresight_repo = get_bean_by_type(ForesightEsRepository)
@@ -300,7 +300,7 @@ class MemCellDeleteService:
         from infra_layer.adapters.out.search.repository.event_log_milvus_repository import (
             EventLogMilvusRepository,
         )
-        from core.di.context import get_bean_by_type
+        from core.di.utils import get_bean_by_type
 
         episodic_repo = get_bean_by_type(EpisodicMemoryMilvusRepository)
         foresight_repo = get_bean_by_type(ForesightMilvusRepository)
@@ -565,7 +565,7 @@ class MemCellDeleteService:
                 from infra_layer.adapters.out.persistence.repository.conversation_data_raw_repository import (
                     ConversationDataRepositoryImpl,
                 )
-                from core.di.context import get_bean_by_type
+                from core.di.utils import get_bean_by_type
 
                 if group_id and group_id != MAGIC_ALL:
                     # 删除整条 ConversationStatus，让下次消息到来时重新从零创建
